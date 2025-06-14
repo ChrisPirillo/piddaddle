@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Quantum Pong 3D - PIDDADDLE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Press Start 2P', cursive;
+            overscroll-behavior: none;
+            touch-action: manipulation;
+            background-color: #000000; 
+            color: #FFFFFF; 
+            margin: 0;
+            overflow: hidden; 
+        }
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex; 
+            align-items: center;
+            justify-content: center;
+            position: relative; 
+        }
+        canvas {
+            display: block;
+        }
+        #ui-overlay { 
+            position: absolute;
+            top: 20px;
+            left: 20px; 
+            right: 20px; 
+            font-size: 1.2rem; 
+            color: #FFFFFF; 
+            text-shadow: 0 0 3px #CCCCCC;
+            z-index: 10;
+            display: grid; /* Use Grid for layout */
+            grid-template-columns: auto 1fr auto; /* Left (auto), Center (flexible), Right (auto) */
+            align-items: center; /* Vertically align items */
+            gap: 10px; /* Optional gap between elements */
+        }
+        #bestTimeDisplay {
+            justify-self: start; /* Align to the start of its grid cell */
+            padding: 5px 10px;
+            background-color: rgba(0,0,0,0.4); 
+            border-radius: 5px;
+            color: #AAAAAA; 
+        }
+        #topCenterChrisButtonContainer {
+            justify-self: center; /* Center this container in its grid cell */
+            display: none; /* Initially hidden */
+        }
+        #timerDisplay {
+            justify-self: end; /* Align to the end of its grid cell */
+            padding: 5px 10px;
+            background-color: rgba(0,0,0,0.4); 
+            border-radius: 5px;
+        }
+        #messageArea {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            display: none; 
+            padding: 0; 
+            background-color: transparent; 
+            border: none; 
+            text-align: center;
+            flex-direction: column; 
+            align-items: center; 
+        }
+        button.game-button-style { 
+            font-family: 'Press Start 2P', cursive;
+            padding: 12px 25px; 
+            font-size: 1.3rem; 
+            color: #000000; 
+            background-color: #FFFFFF; 
+            border: 2px solid #CCCCCC; 
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 0 10px #FFFFFF;
+            transition: all 0.2s ease;
+            margin-top: 15px; 
+            min-width: 250px; 
+        }
+        button.game-button-style:first-child {
+             margin-top: 0; 
+        }
+        button.game-button-style:hover {
+            background-color: #DDDDDD;
+            box-shadow: 0 0 15px #FFFFFF;
+        }
+        button.top-chris-button-style { /* Style for the top @CHRISPIRILLO button */
+            font-family: 'Press Start 2P', cursive;
+            padding: 6px 12px; 
+            font-size: 0.9rem; 
+            color: #000000; 
+            background-color: #FFFFFF; 
+            border: 1px solid #CCCCCC; 
+            border-radius: 4px;
+            cursor: pointer;
+            box-shadow: 0 0 6px #FFFFFF;
+            transition: all 0.2s ease;
+        }
+        button.top-chris-button-style:hover {
+            background-color: #DDDDDD;
+            box-shadow: 0 0 10px #FFFFFF;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="ui-overlay">
+            <span id="bestTimeDisplay"></span>
+            <div id="topCenterChrisButtonContainer" style="display: none;">
+                </div>
+            <span id="timerDisplay">00.000</span>
+        </div>
+        <div id="messageArea">
+            </div>
+        <canvas id="pongCanvas"></canvas>
+        </div>
+
+    <script>
+        // --- DOM Elements ---
+        const canvas = document.getElementById('pongCanvas');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const bestTimeDisplay = document.getElementById('bestTimeDisplay');
+        const messageArea = document.getElementById('messageArea');
+        const topCenterChrisButtonContainer = document.getElementById('topCenterChrisButtonContainer');
+
+        // --- Scene Setup ---
+        let scene, camera, renderer;
+        const FIELD_WIDTH = 20;
+        const FIELD_HEIGHT = 12;
+        const WALL_THICKNESS = 0.05; 
+
+        // --- Game Objects ---
+        let ball, playerPaddle, cpuPaddle; 
+        const PADDLE_WIDTH = 0.5;
+        const PADDLE_HEIGHT = 3;
+        const PADDLE_DEPTH = 0.5;
+        const BALL_SIZE = 0.5; 
+
+        // --- Game State ---
+        let ballVelocity = new THREE.Vector3();
+        const PADDLE_SPEED = 0.32; 
+        const INITIAL_BALL_SPEED_X = 0.045; 
+        const MAX_BALL_SPEED_Y_RATIO = 0.95; 
+        const SPIN_FACTOR = 0.055; 
+        
+        const CPU_REACTION_SPEED_NORMAL = 0.12; 
+        const CPU_MAX_SPEED = PADDLE_SPEED; 
+
+        let gameRunning = false;
+        let waitingForServe = false; 
+        let keysPressed = {};
+        let playerPaddleVelocityY = 0; 
+        let isMouseControlled = false; 
+        let servingPlayer = 'player'; 
+
+        let cameraTargetYaw = 0;
+        let cameraCurrentYaw = 0;
+        let cameraTargetPitch = Math.PI / 12; 
+        let cameraCurrentPitch = Math.PI / 12;
+        let cameraTargetRoll = 0;
+        let cameraCurrentRoll = 0;
+        let cameraTargetRadius = 19; 
+        let cameraCurrentRadius = 19;
+
+        const CAMERA_LERP_FACTOR = 0.010; 
+        const CAMERA_RANDOM_TARGET_INTERVAL_MIN = 3000; 
+        const CAMERA_RANDOM_TARGET_INTERVAL_MAX = 5000; 
+        let nextCameraTargetChangeTime = 0;
+
+        let elapsedTime = 0;
+        let gameStartTime = 0;
+        let bestTime = Infinity;
+
+        let soundsReady = false;
+        let hitSound, roundEndSound, wallSound, serveSound; 
+
+        const initialCameraLookAt = new THREE.Vector3(0, 0, 0);
+
+        async function initializeSounds() {
+            if (soundsReady) return;
+            await Tone.start();
+            console.log("AudioContext started for Quantum Pong 3D");
+
+            hitSound = new Tone.Synth({
+                oscillator: { type: "square" },
+                envelope: { attack: 0.005, decay: 0.08, sustain: 0, release: 0.1 }, 
+                volume: -12 
+            }).toDestination();
+
+            wallSound = new Tone.Synth({ 
+                oscillator: { type: "triangle" }, 
+                envelope: { attack: 0.002, decay: 0.04, sustain: 0, release: 0.06 },
+                volume: -22 
+            }).toDestination();
+            
+            roundEndSound = new Tone.MembraneSynth({ 
+                pitchDecay: 0.04, octaves: 5, oscillator: { type: "triangle" }, 
+                envelope: { attack: 0.002, decay: 0.6, sustain: 0.01, release: 1.6, attackCurve: "exponential"},
+                volume: -7 
+            }).toDestination();
+
+            serveSound = new Tone.Synth({ 
+                oscillator: { type: "sine" },
+                envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.2 },
+                volume: -15
+            }).toDestination();
+            soundsReady = true;
+        }
+        
+        function loadBestTime() {
+            const storedBestTime = localStorage.getItem('quantumPongSurvivalBestTime');
+            if (storedBestTime) {
+                bestTime = parseFloat(storedBestTime);
+                 if (isNaN(bestTime)) bestTime = Infinity;
+            } else {
+                bestTime = Infinity; 
+            }
+            updateBestTimeDisplay();
+        }
+
+        function saveBestTime() {
+            if (elapsedTime > bestTime || bestTime === Infinity) { 
+                 if (elapsedTime > 0) { 
+                    bestTime = elapsedTime;
+                    localStorage.setItem('quantumPongSurvivalBestTime', bestTime.toString());
+                 }
+            }
+            updateBestTimeDisplay();
+        }
+        
+        function formatTime(timeMs) {
+            if (timeMs === Infinity || timeMs < 0 || isNaN(timeMs)) return ""; 
+            const totalSeconds = Math.floor(timeMs / 1000);
+            const milliseconds = Math.floor(timeMs % 1000);
+            return `${String(totalSeconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+        }
+
+        function updateBestTimeDisplay() {
+            bestTimeDisplay.textContent = formatTime(bestTime);
+        }
+
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000); 
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000); 
+            updateCamera(true); 
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight); 
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap; 
+
+            const ambientLight = new THREE.AmbientLight(0x505050); 
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.9); 
+            directionalLight.position.set(8, 10, 12);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 1024;
+            directionalLight.shadow.mapSize.height = 1024;
+            scene.add(directionalLight);
+
+            createArena();
+            createPaddles();
+            createBall(); 
+            
+            setupEventListeners();
+            loadBestTime(); 
+
+            timerDisplay.textContent = formatTime(0);
+            showInitialMessageScreen();
+            
+            animate();
+        }
+
+        function showInitialMessageScreen() {
+            messageArea.innerHTML = ''; 
+            const startButton = document.createElement('button');
+            startButton.className = 'game-button-style';
+            startButton.textContent = "PLAY PIDDADDLE";
+            startButton.onclick = handleGameStartOrRestart;
+            messageArea.appendChild(startButton);
+            messageArea.style.display = 'flex';
+            topCenterChrisButtonContainer.style.display = 'none'; 
+            topCenterChrisButtonContainer.innerHTML = ''; 
+        }
+
+
+        function createArena() {
+            const wallMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x1A1A1A, 
+                transparent: true,
+                opacity: 0.15, 
+                roughness: 0.9, 
+                metalness: 0.05
+            });
+            const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 2 }); 
+
+            const topWallGeo = new THREE.BoxGeometry(FIELD_WIDTH, WALL_THICKNESS, WALL_THICKNESS); 
+            const topWall = new THREE.Mesh(topWallGeo, wallMaterial);
+            topWall.position.set(0, FIELD_HEIGHT / 2 + WALL_THICKNESS / 2, 0);
+            topWall.receiveShadow = true; 
+            scene.add(topWall);
+            const topEdges = new THREE.EdgesGeometry(topWallGeo);
+            scene.add(new THREE.LineSegments(topEdges, edgeMaterial).translateY(FIELD_HEIGHT / 2 + WALL_THICKNESS / 2));
+
+            const bottomWallGeo = new THREE.BoxGeometry(FIELD_WIDTH, WALL_THICKNESS, WALL_THICKNESS);
+            const bottomWall = new THREE.Mesh(bottomWallGeo, wallMaterial);
+            bottomWall.position.set(0, -FIELD_HEIGHT / 2 - WALL_THICKNESS / 2, 0);
+            bottomWall.receiveShadow = true;
+            scene.add(bottomWall);
+            const bottomEdges = new THREE.EdgesGeometry(bottomWallGeo);
+            scene.add(new THREE.LineSegments(bottomEdges, edgeMaterial).translateY(-FIELD_HEIGHT / 2 - WALL_THICKNESS / 2));
+        }
+
+        function createPaddles() {
+            const playerPaddleMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF, roughness: 0.4, metalness: 0.3 });
+            const cpuPaddleMaterial = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.6, metalness: 0.1 });
+            const paddleGeometry = new THREE.BoxGeometry(PADDLE_WIDTH, PADDLE_HEIGHT, PADDLE_DEPTH);
+
+            playerPaddle = new THREE.Mesh(paddleGeometry, playerPaddleMaterial);
+            playerPaddle.position.set(-FIELD_WIDTH / 2 + PADDLE_WIDTH, 0, 0);
+            playerPaddle.castShadow = true;
+            playerPaddle.receiveShadow = true;
+            scene.add(playerPaddle);
+
+            cpuPaddle = new THREE.Mesh(paddleGeometry, cpuPaddleMaterial);
+            cpuPaddle.position.set(FIELD_WIDTH / 2 - PADDLE_WIDTH, 0, 0);
+            cpuPaddle.castShadow = true;
+            cpuPaddle.receiveShadow = true;
+            scene.add(cpuPaddle);
+        }
+
+        function createBall() {
+            const ballGeometry = new THREE.BoxGeometry(BALL_SIZE, BALL_SIZE, BALL_SIZE); 
+            const ballMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xFFFFFF, emissive: 0xEEEEEE, emissiveIntensity: 0.25, 
+                roughness: 0.3, metalness: 0.1
+            });
+            ball = new THREE.Mesh(ballGeometry, ballMaterial);
+            ball.castShadow = true;
+            scene.add(ball);
+            ball.position.set(0,0,-1000); 
+        }
+        
+        async function handleGameStartOrRestart() {
+            if (!soundsReady) {
+                await initializeSounds();
+            }
+            
+            cameraTargetYaw = (Math.random() - 0.5) * Math.PI * 0.5; 
+            cameraTargetPitch = (Math.random() - 0.5) * Math.PI * 0.2; 
+            cameraTargetRoll = 0;
+            cameraTargetRadius = 17 + (Math.random() - 0.5) * 3; 
+            updateCamera(true); 
+
+            messageArea.innerHTML = ''; 
+            messageArea.style.display = 'none'; 
+            topCenterChrisButtonContainer.style.display = 'none'; 
+            topCenterChrisButtonContainer.innerHTML = ''; 
+
+            servingPlayer = (Math.random() < 0.5) ? 'player' : 'cpu'; 
+            elapsedTime = 0;
+            gameStartTime = performance.now();
+            timerDisplay.textContent = formatTime(0);
+            promptForServe();
+        }
+
+        function promptForServe() {
+            gameRunning = false; 
+            waitingForServe = true;
+            ball.position.set(0,0,0); 
+            ballVelocity.set(0,0,0); 
+            messageArea.style.display = 'none'; 
+        }
+        
+        function serveBall() {
+            if (!waitingForServe) return;
+
+            waitingForServe = false;
+            gameRunning = true;
+            gameStartTime = performance.now() - elapsedTime; 
+            messageArea.style.display = 'none';
+            if(soundsReady) serveSound.triggerAttackRelease("C4", "8n");
+
+            let directionX;
+            if (servingPlayer === 'player') directionX = 1;  
+            else directionX = -1; 
+
+            ballVelocity.set(
+                directionX * INITIAL_BALL_SPEED_X,
+                (Math.random() * 1.4 - 0.7) * INITIAL_BALL_SPEED_X * 2.8, 
+                0 
+            );
+        }
+
+
+        function updatePlayerPaddle() {
+            playerPaddleVelocityY = 0;
+            if (!isMouseControlled) { 
+                if (keysPressed['w'] || keysPressed['W']) {
+                    playerPaddle.position.y = Math.min(FIELD_HEIGHT / 2 - PADDLE_HEIGHT / 2, playerPaddle.position.y + PADDLE_SPEED);
+                    playerPaddleVelocityY = PADDLE_SPEED;
+                }
+                if (keysPressed['s'] || keysPressed['S']) {
+                    playerPaddle.position.y = Math.max(-FIELD_HEIGHT / 2 + PADDLE_HEIGHT / 2, playerPaddle.position.y - PADDLE_SPEED);
+                    playerPaddleVelocityY = -PADDLE_SPEED;
+                }
+            }
+        }
+
+        function updateCpuPaddle() { 
+            const targetY = ball.position.y;
+            const diffY = targetY - cpuPaddle.position.y;
+            let moveY = diffY * CPU_REACTION_SPEED_NORMAL; 
+            moveY = Math.max(-CPU_MAX_SPEED, Math.min(CPU_MAX_SPEED, moveY)); 
+
+            cpuPaddle.position.y += moveY;
+            cpuPaddle.position.y = Math.max(-FIELD_HEIGHT / 2 + PADDLE_HEIGHT / 2, Math.min(FIELD_HEIGHT / 2 - PADDLE_HEIGHT / 2, cpuPaddle.position.y));
+        }
+        
+        function updateBall() {
+            ball.position.add(ballVelocity);
+            const ballHalfSize = BALL_SIZE / 2; 
+
+            if (ball.position.y + ballHalfSize > FIELD_HEIGHT / 2 || ball.position.y - ballHalfSize < -FIELD_HEIGHT / 2) {
+                ballVelocity.y *= -1;
+                ball.position.y = Math.sign(ball.position.y) * (FIELD_HEIGHT / 2 - ballHalfSize); 
+                if(soundsReady && gameRunning) wallSound.triggerAttackRelease("G2", "24n"); 
+            }
+
+            if (ballVelocity.x < 0 &&
+                ball.position.x - ballHalfSize < playerPaddle.position.x + PADDLE_WIDTH / 2 &&
+                ball.position.x + ballHalfSize > playerPaddle.position.x - PADDLE_WIDTH / 2 &&
+                ball.position.y + ballHalfSize > playerPaddle.position.y - PADDLE_HEIGHT / 2 && 
+                ball.position.y - ballHalfSize < playerPaddle.position.y + PADDLE_HEIGHT / 2) {
+                
+                ballVelocity.x *= -1; 
+                ball.position.x = playerPaddle.position.x + PADDLE_WIDTH / 2 + ballHalfSize; 
+                
+                const hitPositionNormalized = (ball.position.y - playerPaddle.position.y) / (PADDLE_HEIGHT / 2); 
+
+                if (Math.abs(hitPositionNormalized) < 0.25) { 
+                    ballVelocity.y = (Math.random() - 0.5) * INITIAL_BALL_SPEED_X * 0.4; 
+                } else { 
+                    ballVelocity.y += playerPaddleVelocityY * SPIN_FACTOR * Math.abs(ballVelocity.x);
+                    ballVelocity.y += hitPositionNormalized * 0.065 * Math.abs(ballVelocity.x); 
+                }
+                ballVelocity.y = Math.max(-MAX_BALL_SPEED_Y_RATIO * Math.abs(ballVelocity.x), Math.min(MAX_BALL_SPEED_Y_RATIO* Math.abs(ballVelocity.x), ballVelocity.y));
+                if(soundsReady && gameRunning) hitSound.triggerAttackRelease("C5", "24n"); 
+            }
+
+            if (ballVelocity.x > 0 &&
+                ball.position.x + ballHalfSize > cpuPaddle.position.x - PADDLE_WIDTH / 2 &&
+                ball.position.x - ballHalfSize < cpuPaddle.position.x + PADDLE_WIDTH / 2 &&
+                ball.position.y + ballHalfSize > cpuPaddle.position.y - PADDLE_HEIGHT / 2 && 
+                ball.position.y - ballHalfSize < cpuPaddle.position.y + PADDLE_HEIGHT / 2) {
+                
+                ballVelocity.x *= -1; 
+                ball.position.x = cpuPaddle.position.x - PADDLE_WIDTH / 2 - ballHalfSize; 
+                const hitPositionNormalizedCPU = (ball.position.y - cpuPaddle.position.y) / (PADDLE_HEIGHT / 2);
+                 if (Math.abs(hitPositionNormalizedCPU) < 0.25) { 
+                    ballVelocity.y = (Math.random() - 0.5) * INITIAL_BALL_SPEED_X * 0.4; 
+                } else {
+                    ballVelocity.y += hitPositionNormalizedCPU * 0.040 * Math.abs(ballVelocity.x); 
+                }
+                ballVelocity.y = Math.max(-MAX_BALL_SPEED_Y_RATIO * Math.abs(ballVelocity.x), Math.min(MAX_BALL_SPEED_Y_RATIO* Math.abs(ballVelocity.x), ballVelocity.y));
+
+                if(soundsReady && gameRunning) hitSound.triggerAttackRelease("A4", "24n"); 
+            }
+
+            if (ball.position.x + ballHalfSize < -FIELD_WIDTH / 2 - PADDLE_WIDTH) { 
+                if(soundsReady && gameRunning) roundEndSound.triggerAttackRelease("D3", "0.8n"); 
+                servingPlayer = 'player'; 
+                handleRoundEnd('PLAYER'); 
+            } else if (ball.position.x - ballHalfSize > FIELD_WIDTH / 2 + PADDLE_WIDTH) { 
+                if(soundsReady && gameRunning) roundEndSound.triggerAttackRelease("A3", "0.8n"); 
+                servingPlayer = 'cpu'; 
+                handleRoundEnd('CPU'); 
+            }
+        }
+        
+        function handleRoundEnd(loser) { 
+            gameRunning = false;
+            waitingForServe = false; 
+            saveBestTime(); 
+            
+            messageArea.innerHTML = ''; 
+
+            const tryAgainButton = document.createElement('button');
+            tryAgainButton.className = 'game-button-style';
+            tryAgainButton.textContent = "TRY AGAIN?";
+            tryAgainButton.onclick = handleGameStartOrRestart;
+            messageArea.appendChild(tryAgainButton);
+
+            const shareButton = document.createElement('button');
+            shareButton.className = 'game-button-style'; 
+            shareButton.textContent = "SHARE SCORE";
+            const scoreInSeconds = Math.floor(elapsedTime / 1000); 
+            const shareText = encodeURIComponent(`I made it ${scoreInSeconds} seconds in @ChrisPirillo's PIDDADDLE! Can you beat it? Play here now for free: https://g.co/gemini/share/b682137e4521`); // Corrected URL
+            const shareUrl = `https://twitter.com/intent/post?text=${shareText}`;
+            shareButton.onclick = () => { window.open(shareUrl, '_blank'); };
+            messageArea.appendChild(shareButton);
+            
+            messageArea.style.display = 'flex'; 
+
+            topCenterChrisButtonContainer.innerHTML = ''; 
+            const chrisButtonTop = document.createElement('button');
+            chrisButtonTop.className = 'top-chris-button-style'; 
+            chrisButtonTop.textContent = "@CHRISPIRILLO";
+            chrisButtonTop.onclick = () => { window.open('https://pirillo.com/', '_blank'); };
+            topCenterChrisButtonContainer.appendChild(chrisButtonTop);
+            topCenterChrisButtonContainer.style.display = 'block'; 
+        }
+
+        function update(deltaTime) { 
+            if (!gameRunning && !waitingForServe) return; 
+
+            if (waitingForServe) { 
+                updatePlayerPaddle(); 
+                return; 
+            }
+            
+            if (gameRunning) {
+                elapsedTime = performance.now() - gameStartTime;
+                timerDisplay.textContent = formatTime(elapsedTime);
+            }
+
+            updatePlayerPaddle();
+            updateCpuPaddle(); 
+            updateBall();
+        }
+        
+        function updateCamera(forceImmediate = false) {
+            const now = performance.now();
+            if (now > nextCameraTargetChangeTime || forceImmediate) { 
+                cameraTargetYaw = (Math.random() * Math.PI * 4) - Math.PI * 2; 
+                cameraTargetPitch = ((Math.random() * Math.PI ) - Math.PI / 2) * 0.55; 
+                cameraTargetRoll = (Math.random() * Math.PI * 1.8) - Math.PI * 0.9;   
+                cameraTargetRadius = 15.5 + Math.random() * 5; 
+                
+                nextCameraTargetChangeTime = now + CAMERA_RANDOM_TARGET_INTERVAL_MIN + 
+                                           Math.random() * (CAMERA_RANDOM_TARGET_INTERVAL_MAX - CAMERA_RANDOM_TARGET_INTERVAL_MIN);
+            }
+
+            if (forceImmediate) {
+                cameraCurrentYaw = cameraTargetYaw;
+                cameraCurrentPitch = cameraTargetPitch;
+                cameraCurrentRoll = cameraTargetRoll;
+                cameraCurrentRadius = cameraTargetRadius;
+            } else {
+                cameraCurrentYaw += (cameraTargetYaw - cameraCurrentYaw) * CAMERA_LERP_FACTOR;
+                cameraCurrentPitch += (cameraTargetPitch - cameraCurrentPitch) * CAMERA_LERP_FACTOR;
+                cameraCurrentRoll += (cameraTargetRoll - cameraCurrentRoll) * CAMERA_LERP_FACTOR;
+                cameraCurrentRadius += (cameraTargetRadius - cameraCurrentRadius) * CAMERA_LERP_FACTOR;
+            }
+            
+            const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), cameraCurrentYaw);
+            const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraCurrentPitch);
+            const qRoll = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), cameraCurrentRoll);
+            
+            const combinedQuaternion = new THREE.Quaternion().multiply(qYaw).multiply(qPitch).multiply(qRoll);
+
+            const offset = new THREE.Vector3(0, 0, cameraCurrentRadius);
+            offset.applyQuaternion(combinedQuaternion); 
+            
+            camera.position.copy(initialCameraLookAt).add(offset); 
+            camera.lookAt(initialCameraLookAt); 
+            
+            camera.up.set(0,1,0).applyQuaternion(qRoll); 
+        }
+        
+        let lastTime = 0;
+        function animate(currentTime) { 
+            requestAnimationFrame(animate);
+            const deltaTime = (currentTime - lastTime) * 0.001; 
+            lastTime = currentTime;
+            
+            updateCamera(); 
+            update(deltaTime || 0); 
+            renderer.render(scene, camera);
+        }
+
+        function setupEventListeners() {
+            document.addEventListener('keydown', onKeyDown); 
+            document.addEventListener('keyup', onKeyUp);
+            window.addEventListener('resize', onWindowResize);
+            // gameControlButton event listener is added when the button is created/recreated.
+
+            canvas.addEventListener('click', () => { 
+                if (waitingForServe) {
+                    serveBall();
+                }
+            });
+
+            canvas.addEventListener('mouseenter', () => { if(gameRunning || waitingForServe) isMouseControlled = true; });
+            canvas.addEventListener('mouseleave', () => { 
+                isMouseControlled = false; 
+                playerPaddleVelocityY = 0; 
+            });
+
+            const movePaddleWithPointer = (clientY) => {
+                if ((!gameRunning && !waitingForServe) || !isMouseControlled) return;
+                const rect = canvas.getBoundingClientRect();
+                const mouseYPercentage = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)); 
+                
+                const prevY = playerPaddle.position.y;
+                playerPaddle.position.y = (FIELD_HEIGHT / 2 - PADDLE_HEIGHT / 2) - (mouseYPercentage * (FIELD_HEIGHT - PADDLE_HEIGHT));
+                
+                playerPaddle.position.y = Math.max(-FIELD_HEIGHT / 2 + PADDLE_HEIGHT / 2, 
+                                          Math.min(FIELD_HEIGHT / 2 - PADDLE_HEIGHT / 2, playerPaddle.position.y));
+                
+                playerPaddleVelocityY = (playerPaddle.position.y - prevY) * 5; 
+                playerPaddleVelocityY = Math.max(-PADDLE_SPEED, Math.min(PADDLE_SPEED, playerPaddleVelocityY));
+            };
+
+            canvas.addEventListener('mousemove', (e) => {
+                movePaddleWithPointer(e.clientY);
+            });
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault(); 
+                if (e.touches.length > 0) {
+                    isMouseControlled = true; 
+                    movePaddleWithPointer(e.touches[0].clientY);
+                }
+            }, { passive: false });
+            canvas.addEventListener('touchstart', (e) => {
+                 e.preventDefault();
+                 if (e.touches.length > 0) {
+                    isMouseControlled = true;
+                    movePaddleWithPointer(e.touches[0].clientY);
+                 }
+            }, { passive: false });
+             canvas.addEventListener('touchend', (e) => {
+                playerPaddleVelocityY = 0; 
+            });
+        }
+
+        function onKeyDown(event) {
+            if (waitingForServe) {
+                serveBall();
+            }
+            keysPressed[event.key.toLowerCase()] = true; 
+        }
+
+        function onKeyUp(event) {
+            keysPressed[event.key.toLowerCase()] = false;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-1CQ4D3VQ3L"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-1CQ4D3VQ3L');
+</script>
+
+</body>
+</html>
